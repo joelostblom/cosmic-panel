@@ -726,11 +726,54 @@ impl PanelSpace {
         }
     }
 
+    fn border_radius_with_theme(&self, config: &CosmicPanelConfig, theme: &cosmic::Theme) -> u32 {
+        if let Some(radius) = config.border_radius_override {
+            return radius;
+        }
+        let radius = theme.cosmic().corner_radii.radius_xl[0] as u32;
+        if config.anchor_gap {
+            radius
+        } else if !config.expand_to_edges {
+            radius.min(12)
+        } else {
+            0
+        }
+    }
+
+    fn border_radius_for(&self, config: &CosmicPanelConfig) -> u32 {
+        self.border_radius_with_theme(config, &self.colors.theme)
+    }
+
+    fn max_corner_radius(&self) -> u32 {
+        let min_dim = self.actual_size.h.min(self.actual_size.w) as u32;
+        min_dim.saturating_div(2)
+    }
+
+    fn padding_with_theme(&self, config: &CosmicPanelConfig, theme: &cosmic::Theme) -> u32 {
+        if let Some(padding) = config.padding_override {
+            return padding;
+        }
+        if config.name == "Dock" {
+            let roundness: cosmic::cosmic_theme::Roundness = theme.cosmic().corner_radii.into();
+            match roundness {
+                cosmic::cosmic_theme::Roundness::Round
+                | cosmic::cosmic_theme::Roundness::SlightlyRound => 4,
+                cosmic::cosmic_theme::Roundness::Square => 0,
+            }
+        } else {
+            0
+        }
+    }
+
+    pub fn padding(&self) -> u32 {
+        self.padding_with_theme(&self.config, &self.colors.theme)
+    }
+
     pub fn border_radius(&self) -> u32 {
         if let Some(animatable_state) = self.animate_state.as_ref() {
             animatable_state.cur.border_radius
         } else {
-            self.config.border_radius
+            self.border_radius_for(&self.config)
         }
     }
 
@@ -1133,8 +1176,12 @@ impl PanelSpace {
             })
             .map(|(w, h)| (w as u32, h as u32));
 
-        let (constrained_w, constrained_h) =
-            self.config.get_dimensions(output_dims, self.suggested_length, active_gap);
+        let (constrained_w, constrained_h) = self.config.get_dimensions(
+            output_dims,
+            self.suggested_length,
+            active_gap,
+            self.padding(),
+        );
         if let Some(w_range) = constrained_w {
             w = w.clamp(w_range.start as i32, w_range.end as i32 - 1);
         }
@@ -1239,7 +1286,12 @@ impl PanelSpace {
         mut renderer: Option<&mut GlesRenderer>,
         qh: &QueueHandle<GlobalState>,
     ) -> Instant {
+        let mapped = self.space.elements().count();
         self.space.refresh();
+        if self.space.elements().count() != mapped {
+            self.is_dirty = true;
+            self.needs_layout = true;
+        }
         self.apply_animation_state();
 
         self.handle_focus();
@@ -1561,18 +1613,30 @@ impl PanelSpace {
 
     pub fn set_theme(&mut self, colors: PanelColors) {
         let color = colors.bg_color(self.config.opacity, self.maximized);
+
+        // clamp border radius
+        let border_radius = self
+            .border_radius_with_theme(&self.config, &colors.theme)
+            .min(self.actual_size.w as u32 / 2)
+            .min(self.actual_size.h as u32 / 2);
         if let Some(animate_state) = self.animate_state.as_mut() {
             animate_state.end.bg_color = color;
+            animate_state.end.border_radius = border_radius;
         } else {
             let start = AnimatableState {
                 bg_color: self.colors.bg_color(self.config.opacity, self.maximized),
-                border_radius: self.config.border_radius,
+                border_radius: self
+                    .border_radius()
+                    .min(self.actual_size.w as u32 / 2)
+                    .min(self.actual_size.h as u32 / 2),
                 expanded: if self.config.expand_to_edges { 1.0 } else { 0.0 },
                 gap: self.gap(),
             };
+
             let cur = start.clone();
             let mut end = start.clone();
             end.bg_color = color;
+            end.border_radius = border_radius;
             self.animate_state = Some(AnimateState {
                 start,
                 end,
@@ -1603,6 +1667,8 @@ impl PanelSpace {
             e.force_redraw();
         }
         self.colors = colors;
+        self.is_dirty = true;
+        self.needs_layout = true;
     }
 
     /// clear the panel
@@ -1810,13 +1876,19 @@ impl PanelSpace {
         if animate {
             let start = AnimatableState {
                 bg_color: self.colors.bg_color(self.config.opacity, self.maximized),
-                border_radius: self.config.border_radius,
+                border_radius: self
+                    .border_radius()
+                    .min(self.actual_size.w as u32 / 2)
+                    .min(self.actual_size.h as u32 / 2),
                 expanded: if self.config.expand_to_edges { 1.0 } else { 0.0 },
                 gap: self.gap(),
             };
             let end = AnimatableState {
                 bg_color,
-                border_radius: config.border_radius,
+                border_radius: self
+                    .border_radius_with_theme(&config, &self.colors.theme)
+                    .min(self.actual_size.w as u32 / 2)
+                    .min(self.actual_size.h as u32 / 2),
                 expanded: if config.expand_to_edges { 1.0 } else { 0.0 },
                 gap: config.get_effective_anchor_gap() as u16,
             };
@@ -2113,8 +2185,12 @@ impl PanelSpace {
     ) {
         if self.colors.panel_blur(self.config.opacity) {
             if let Some(corner_radius_wlr) = self.corner_radius_wlr.as_ref() {
-                let gap =
-                    (self.gap() as u32).min(rect.size.h as u32 / 2).min(rect.size.w as u32 / 2);
+                let max_radius = self.max_corner_radius().min(
+                    rect.size.h.min(rect.size.w).min(self.actual_size.w).min(self.actual_size.h)
+                        as u32
+                        / 2,
+                );
+                let gap = (self.gap() as u32).min(max_radius);
 
                 let padding = match self.config.anchor {
                     PanelAnchor::Left => [rect.loc.y, 0, rect.loc.y, gap as i32],
@@ -2122,13 +2198,20 @@ impl PanelSpace {
                     PanelAnchor::Top => [gap as i32, rect.loc.x, 0, rect.loc.x],
                     PanelAnchor::Bottom => [0, rect.loc.x, gap as i32, rect.loc.x],
                 };
-                corner_radius_wlr.set_padding(padding[0], padding[1], padding[2], padding[3]);
-
+                if self.actual_size.w <= 1 || self.actual_size.h <= 1 {
+                    corner_radius_wlr.unset_padding();
+                } else {
+                    corner_radius_wlr.set_padding(padding[0], padding[1], padding[2], padding[3]);
+                }
                 for corner in &mut corners {
-                    *corner = (*corner).min(rect.size.h.min(rect.size.w) as u32 / 2 - gap);
+                    *corner = (*corner).min(max_radius);
                 }
 
-                corner_radius_wlr.set_radius(corners[0], corners[1], corners[2], corners[3]);
+                if self.actual_size.w <= 1 || self.actual_size.h <= 1 {
+                    corner_radius_wlr.unset_radius();
+                } else {
+                    corner_radius_wlr.set_radius(corners[0], corners[1], corners[2], corners[3]);
+                }
             }
             if let Some((blur_surface, compositor_state)) =
                 self.blur_surface.as_ref().zip(self.compositor_state.as_ref())

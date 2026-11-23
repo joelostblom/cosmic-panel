@@ -240,7 +240,7 @@ impl PanelSpace {
             bg_color[c] *= bg_color[3];
         }
         let gap = self.gap();
-        let padding_u32 = self.config.padding();
+        let padding_u32 = self.padding();
         let padding_scaled = padding_u32 as f64 * self.scale;
         let anchor = self.config.anchor();
         let spacing_u32 = self.config.spacing();
@@ -820,7 +820,11 @@ impl PanelSpace {
             }
         }
 
-        let border_radius = (self.border_radius() as f32).min(w as f32 / 2.).min(h as f32 / 2.);
+        let border_radius = (self.border_radius() as f32)
+            .min(new_logical_crosswise_dim as f32 / 2.)
+            .min(new_logical_length as f32 / 2.)
+            .min(self.actual_size.w as f32 / 2.)
+            .min(self.actual_size.h as f32 / 2.);
         let radius = match (self.config.anchor, self.gap()) {
             (PanelAnchor::Right, 0) => [border_radius, 0., 0., border_radius],
             (PanelAnchor::Left, 0) => [0., border_radius, border_radius, 0.],
@@ -990,7 +994,10 @@ impl PanelSpace {
                 }
                 if self.animate_state.is_none() {
                     input_region.add(loc.0, loc.1, size.0, size.1);
-
+                }
+                if !((self.actual_size.w <= 20 && self.actual_size.h <= 20)
+                    && !(self.dimensions.w <= 20 && self.dimensions.h <= 20))
+                {
                     self.blur(smithay::utils::Rectangle::new(loc.into(), size.into()), radius);
                 }
             } else {
@@ -1019,6 +1026,10 @@ impl PanelSpace {
                 }
                 if self.animate_state.is_none() {
                     input_region.add(loc.0, loc.1, size.0, size.1);
+                }
+                if !((self.actual_size.w <= 20 && self.actual_size.h <= 20)
+                    && !(self.dimensions.w <= 20 && self.dimensions.h <= 20))
+                {
                     self.blur(smithay::utils::Rectangle::new(loc.into(), size.into()), radius);
                 }
             };
@@ -1068,7 +1079,6 @@ impl PanelSpace {
         let cur_cnt = elements.len();
 
         let _applet_size_unit = self.config.size.get_applet_icon_size_with_padding(true);
-        let _padding = self.config.padding as i32;
         let spacing = self.config.spacing as i32;
         let Some(output) = self.output.as_ref().map(|o| o.1.clone()) else {
             return;

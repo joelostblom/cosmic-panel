@@ -659,7 +659,6 @@ impl WrapperSpace for PanelSpace {
                         }
                     })
                     .with_on_exit(move |mut pman, key, err_code, is_restarting| {
-                        let client_id_clone = client_id.clone();
                         let id_clone = id_clone.clone();
 
                         if let Some(err_code) = err_code {
@@ -678,7 +677,7 @@ impl WrapperSpace for PanelSpace {
                         let raw_client_socket = client_socket.as_raw_fd();
                         let mut applet_env = Vec::with_capacity(1);
                         let mut fds: Vec<OwnedFd> = Vec::with_capacity(2);
-                        let should_restart = is_restarting && err_code.is_some();
+                        let should_restart = is_restarting;
                         let security_context = if requests_wayland_display && should_restart {
                             security_context_manager_clone.as_ref().and_then(
                                 |security_context_manager| {
@@ -755,21 +754,25 @@ impl WrapperSpace for PanelSpace {
                                 }
                             }
 
-                            if let Some(old_client) = my_list
+                            let old_client_id = if let Some(old_client) = my_list
                                 .lock()
                                 .unwrap()
                                 .iter_mut()
                                 .find(|PanelClient { name, .. }| name == &id_clone)
                             {
-                                old_client.client = Some(c);
+                                let old_client_id = old_client.client.replace(c).map(|c| c.id());
                                 old_client.security_ctx = security_context;
                                 info!("Replaced the client socket");
+                                old_client_id
                             } else {
-                                error!("Failed to find matching client... {}", &id_clone)
+                                error!("Failed to find matching client... {}", &id_clone);
+                                None
+                            };
+                            if let Some(old_client_id) = old_client_id {
+                                let _ = applet_tx_clone
+                                    .send(AppletMsg::ClientSocketPair(old_client_id))
+                                    .await;
                             }
-                            let _ = applet_tx_clone
-                                .send(AppletMsg::ClientSocketPair(client_id_clone))
-                                .await;
 
                             applet_env.retain(|(k, _)| k.as_str() != "WAYLAND_SOCKET");
                             applet_env.push((
@@ -1454,7 +1457,7 @@ impl WrapperSpace for PanelSpace {
     }
 
     fn close_popup(&mut self, popup: &sctk::shell::xdg::popup::Popup) {
-        self.close_popups(|p| p.c_popup.wl_surface() == popup.wl_surface());
+        self.close_popups(|p| p.c_popup.wl_surface() != popup.wl_surface());
     }
 
     // handled by custom method with access to renderer instead
@@ -1694,6 +1697,11 @@ impl WrapperSpace for PanelSpace {
             || self.overflow_popup.as_ref().is_some_and(|p| p.0.c_popup.wl_surface() == surface)
         {
             self.scale = scale;
+            if let Some(c) = self.corner_radius_wlr.as_ref() {
+                // will be reset after the next layout
+                c.unset_padding();
+                c.unset_radius();
+            }
 
             if legacy && self.layer_fractional_scale.is_none() {
                 surface.set_buffer_scale(scale as i32);
@@ -1782,8 +1790,8 @@ impl WrapperSpace for PanelSpace {
                 self.reset_overflow();
             }
 
-            let scaled = self.dimensions.to_f64();
-            self.dimensions = scaled.to_i32_round();
+            self.container_length = 1;
+            self.dimensions = Size::new(1, 1);
             self.pending_dimensions =
                 Some(if self.config.is_horizontal() { (0, 1) } else { (1, 0) }.into());
             self.clear();
