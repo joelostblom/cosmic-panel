@@ -5,21 +5,17 @@
 > assume `cosmic-session` manages the panel and finds `~/.local/bin` before
 > `/usr/bin` in its `PATH` (tested on Fedora).
 >
-> **Build and switch.** In a terminal in your COSMIC session, run this from
-> the root of this checkout. Use a release build for smooth animations.
+> **Build and switch.** From the root of this checkout, run `pixi run build`
+> for a release build without changing your desktop. To build and switch, run
+> this in a terminal inside COSMIC:
 >
 > ```sh
-> patched="$PWD/target/release/cosmic-panel"
-> link="$HOME/.local/bin/cosmic-panel"
-> cargo build --locked --release -p cosmic-panel-bin &&
->   test -x "$patched" &&
->   mkdir -p "$HOME/.local/bin" &&
->   { test -L "$link" || test ! -e "$link"; } &&
->   ln -sfnT -- "$patched" "$link" &&
->   pkill -TERM -u "$(id -u)" -x cosmic-panel
+> pixi run try-local
 > ```
 >
-> The panel and dock may briefly disappear while COSMIC restarts them.
+> This links the release binary into `~/.local/bin` and restarts the panel.
+> It leaves existing files and links to other checkouts alone. The panel and
+> dock may briefly disappear while COSMIC restarts them.
 >
 > **Bind the shortcut.** In **COSMIC Settings → Keyboard Shortcuts → Custom
 > Shortcuts**, pick an unused key combination and give it this command:
@@ -32,12 +28,11 @@
 > where it is configured. The second press restores normal hover and overlap
 > behavior. It doesn't change the dock or any saved settings.
 >
-> **Switch back.** Remove the symlink and let COSMIC restart the packaged panel:
+> **Switch back.** Remove only this checkout's symlink and let COSMIC restart
+> the packaged panel:
 >
 > ```sh
-> link="$HOME/.local/bin/cosmic-panel"
-> test -L "$link" && unlink "$link" &&
->   pkill -TERM -u "$(id -u)" -x cosmic-panel
+> pixi run restore-local
 > ```
 
 # Cosmic Panel (WIP)
