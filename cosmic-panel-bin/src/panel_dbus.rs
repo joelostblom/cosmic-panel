@@ -19,9 +19,9 @@ impl PanelControl {
 }
 
 pub async fn serve(sender: Sender<PanelCalloopMsg>) -> zbus::Result<()> {
-    let _connection = Builder::session()?
-        .name(BUS_NAME)?
-        .serve_at(OBJECT_PATH, PanelControl { sender })?
+    let _connection = Builder::session()
+        .name(BUS_NAME)
+        .serve_at(OBJECT_PATH, PanelControl { sender })
         .build()
         .await?;
     // Keep the bus name and exported interface alive while the panel runs.
